@@ -27,7 +27,7 @@
   <meta name="twitter:description" content="VEYRA is an AI powered hiring platform. Recruiters post jobs, screen resumes and generate interview questions, while candidates find roles and apply in minutes." />
   <meta name="twitter:image" content="https://veyra-sand.vercel.app/assets/brand/og-image.png" />
 </head>
-<body>
+<body class="auth-fit">
     <script src="js/brand.js"></script>
     <script>showPageLoader(); window.addEventListener('load', hidePageLoader);</script>
 
@@ -64,10 +64,6 @@
                     New here? <a href="register.html">Create an account</a>
                 </div>
 
-                <div id="demo-hint" class="auth-footer hidden">
-                    Demo accounts (password 12345678):<br>
-                    recruiter@test.com or candidate@test.com
-                </div>
             </div>
         </main>
     </div>
@@ -93,11 +89,6 @@
         if (getToken() && existingUser)
         {
             authRedirect(dashboardFor(existingUser.role), 0);
-        }
-
-        if (USE_MOCK)
-        {
-            document.getElementById('demo-hint').classList.remove('hidden');
         }
 
         const validateEmail = authBindField(emailInput, function ()
