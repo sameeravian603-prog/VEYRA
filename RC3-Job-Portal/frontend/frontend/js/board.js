@@ -375,7 +375,7 @@ const Board =
 
             try
             {
-                const result = await Api.post('/api/applications/' + encodeURIComponent(item.id) + '/decision', { decision: to, reason: text });
+                const result = await Api.patch('/api/applications/' + encodeURIComponent(item.id) + '/status', { status: to, reason: text });
 
                 Board.cfg.onMoved(result.application || result);
                 showToast(reject ? 'Candidate rejected' : 'Candidate selected', 'success');

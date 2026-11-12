@@ -244,7 +244,12 @@
             const date = Dash.formatDate(app.appliedAt);
             const icon = app.status === 'Selected' ? 'party-popper' : (app.status === 'Interview' ? 'calendar-check' : (app.status === 'Shortlisted' ? 'star' : (app.status === 'Rejected' ? 'compass' : 'clock')));
             const upcoming = CandidateKit.isActive(app.status) && step < total - 1 ? 'Next: ' + CandidateKit.STEPS[step + 1] : '';
-            const cta = app.status === 'Rejected' ? '<a href="candidate.html#jobs">Browse open jobs</a>' : '';
+            const cta = (app.questionCount > 0 || CandidateKit.isActive(app.status)
+                ? '<a class="btn btn-secondary btn-sm" href="candidate-questions.html?id=' + encodeURIComponent(app.id) + '">' +
+                    (app.questionCount > 0 && app.answeredQuestionCount === app.questionCount
+                        ? 'View submitted answers'
+                        : 'Check recruiter questions') + '</a>'
+                : '') + (app.status === 'Rejected' ? '<a href="candidate.html#jobs">Browse open jobs</a>' : '');
 
             return '<article class="ma-card' + (tone === 'ok' ? ' is-ok' : (tone === 'bad' ? ' is-bad' : '')) + '" data-app="' + CandidateKit.attrEsc(app.id) + '" style="--i:' + Math.min(index, 6) + '">' +
                 '<header class="ma-head"><span class="ma-mark" aria-hidden="true">' + Dash.esc(String(app.jobTitle || '?').charAt(0).toUpperCase()) + '</span>' +

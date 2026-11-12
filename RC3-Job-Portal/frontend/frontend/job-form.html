@@ -61,12 +61,14 @@
                             <div class="error-text" id="title-error"></div>
                         </div>
                         <div>
-                            <label for="department">Department</label>
+                            <label for="department">Department <span class="req">*</span></label>
                             <input type="text" id="department" placeholder="Engineering">
+                            <div class="error-text" id="department-error"></div>
                         </div>
                         <div>
-                            <label for="location">Location</label>
+                            <label for="location">Location <span class="req">*</span></label>
                             <input type="text" id="location" placeholder="Lahore, Pakistan">
+                            <div class="error-text" id="location-error"></div>
                         </div>
                         <div>
                             <label for="type">Employment type</label>
@@ -160,7 +162,7 @@
     <script src="js/polish.js"></script>
     <script>
         const user = guardPage('recruiter');
-        const jobId = Dash.intParam('id', 0);
+        const jobId = Dash.param('id');
         const form = document.getElementById('job-form');
         const loadBox = document.getElementById('load-box');
         const formError = document.getElementById('form-error');
@@ -233,6 +235,13 @@
             return message ? { id: 'title', message: message } : null;
         }
 
+        function requiredTextProblem(id, label)
+        {
+            const message = el(id).value.trim().length >= 2 ? '' : 'Please enter a ' + label + ' (at least 2 characters).';
+            fieldError(id, message);
+            return message ? { id: id, message: message } : null;
+        }
+
         function descriptionProblem()
         {
             const value = el('description').value.trim();
@@ -294,7 +303,14 @@
 
         function validateAll()
         {
-            return [titleProblem(), descriptionProblem(), yearsProblem(), duplicateProblem()].filter(Boolean);
+            return [
+                titleProblem(),
+                requiredTextProblem('department', 'department'),
+                requiredTextProblem('location', 'location'),
+                descriptionProblem(),
+                yearsProblem(),
+                duplicateProblem()
+            ].filter(Boolean);
         }
 
         function focusProblem(problem)
@@ -726,6 +742,8 @@
             });
 
             el('title').addEventListener('input', liveValidate(titleProblem));
+            el('department').addEventListener('input', liveValidate(function () { return requiredTextProblem('department', 'department'); }));
+            el('location').addEventListener('input', liveValidate(function () { return requiredTextProblem('location', 'location'); }));
             el('description').addEventListener('input', liveValidate(descriptionProblem));
             el('experienceYears').addEventListener('input', liveValidate(yearsProblem));
 

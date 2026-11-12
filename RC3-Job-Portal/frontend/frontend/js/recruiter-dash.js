@@ -592,7 +592,7 @@ const RDash =
         box.innerHTML = '<div class="rd-bars">' + byJob.map(function (item)
         {
             const job = RDash.state.jobs.filter(function (candidate) { return candidate.title === item.job; })[0];
-            const href = job ? 'applicants.html?jobId=' + encodeURIComponent(job.id) : 'jobs.html';
+            const href = job ? 'applicants.html?jobId=' + encodeURIComponent(job.id || job._id) : 'jobs.html';
 
             return '<a class="rd-bar-row" href="' + href + '"><span class="rd-name">' + Dash.esc(item.job) + '</span><span class="rd-num">' + item.count + '</span>' +
                 '<span class="rd-track"><i class="rd-fill" style="transform:scaleX(' + (item.count / max).toFixed(3) + ')"></i></span></a>';

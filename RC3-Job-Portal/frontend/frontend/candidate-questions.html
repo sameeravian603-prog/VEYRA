@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interview questions – VEYRA</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body class="theme-candidate">
+    <script src="js/brand.js"></script>
+    <script>showPageLoader(); window.addEventListener('load', hidePageLoader);</script>
+    <main class="d-content">
+        <section class="d-panel">
+            <div class="d-panel-head">
+                <div>
+                    <h2 id="page-title">Questions from the recruiter</h2>
+                    <p class="sub" id="page-subtitle">Write your answers and submit them when ready.</p>
+                </div>
+                <a class="btn btn-secondary btn-sm" href="my-applications.html">My applications</a>
+            </div>
+            <div id="error-box" class="form-error hidden" role="alert"></div>
+            <div id="questions-list" aria-live="polite"></div>
+            <form id="answers-form" hidden>
+                <div id="submit-area" class="d-actions">
+                    <button class="btn" type="submit" id="submit-btn">Submit answers</button>
+                </div>
+            </form>
+        </section>
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+    <script src="js/icons.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/mock.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/dashboard.js"></script>
+    <script>
+        const user = guardPage('candidate');
+        const applicationId = Dash.param('id');
+        let questions = [];
+
+        function el(id) { return document.getElementById(id); }
+
+        function showError(message)
+        {
+            el('error-box').textContent = message || '';
+            el('error-box').classList.toggle('hidden', !message);
+        }
+
+        function render()
+        {
+            const submitted = questions.length > 0 && questions.every(function (question) { return Boolean(question.answeredAt); });
+            el('questions-list').innerHTML = questions.map(function (question, index)
+            {
+                const questionId = String(question.id || question._id || '');
+                const questionText = question.text || question.question || '';
+                return '<div class="d-panel" style="margin:14px 0"><h3>Question ' + (index + 1) +
+                    (question.skill ? ' · ' + Dash.esc(question.skill) : '') + '</h3><p>' + Dash.esc(questionText) + '</p>' +
+                    '<label for="answer-' + Dash.esc(questionId) + '">Your answer</label>' +
+                    '<textarea id="answer-' + Dash.esc(questionId) + '" data-answer-id="' + Dash.esc(questionId) + '" maxlength="5000" rows="5" required' +
+                    (submitted ? ' readonly' : '') + '>' + Dash.esc(question.answer || '') + '</textarea></div>';
+            }).join('');
+            el('submit-area').hidden = submitted;
+            el('page-subtitle').textContent = submitted
+                ? 'Your answers have been submitted to the recruiter.'
+                : 'Answer every question, then submit once. The recruiter will receive your responses.';
+            el('answers-form').hidden = false;
+        }
+
+        async function load()
+        {
+            if (!applicationId)
+            {
+                showError('Open this page from My applications.');
+                el('questions-list').innerHTML = Dash.empty('help-circle', 'Choose an application from My applications to view recruiter questions.');
+                if (window.lucide) { window.lucide.createIcons(); }
+                return;
+            }
+            el('questions-list').innerHTML = Dash.skeletons(2);
+            try
+            {
+                const result = await Api.get('/api/candidate/applications/' + encodeURIComponent(applicationId) + '/questions');
+                questions = Array.isArray(result.questions) ? result.questions : [];
+                el('page-title').textContent = 'Questions for ' + (result.jobTitle || 'your application');
+                if (!questions.length)
+                {
+                    el('answers-form').hidden = true;
+                    el('questions-list').innerHTML = Dash.empty('help-circle', 'The recruiter has not sent any questions yet.');
+                    if (window.lucide) { window.lucide.createIcons(); }
+                    return;
+                }
+                render();
+            }
+            catch (error)
+            {
+                el('questions-list').innerHTML = '';
+                el('answers-form').hidden = true;
+                showError(error.message);
+            }
+        }
+
+        el('answers-form').addEventListener('submit', async function (event)
+        {
+            event.preventDefault();
+            showError('');
+            const answers = questions.map(function (question)
+            {
+                const questionId = String(question.id || question._id || '');
+                const field = el('answer-' + questionId);
+                return { questionId: questionId, answer: field ? field.value.trim() : '' };
+            });
+            const missing = answers.findIndex(function (item) { return !item.answer; });
+            if (missing !== -1)
+            {
+                showError('Please answer every question before submitting.');
+                const firstMissing = el('answer-' + answers[missing].questionId);
+                if (firstMissing) { firstMissing.focus(); }
+                return;
+            }
+
+            const button = el('submit-btn');
+            Dash.setBusy(button, true);
+            try
+            {
+                await Api.post('/api/candidate/applications/' + encodeURIComponent(applicationId) + '/questions/answers', { answers: answers });
+                questions = questions.map(function (question, index)
+                {
+                    return Object.assign({}, question, { answer: answers[index].answer, answeredAt: new Date().toISOString() });
+                });
+                render();
+                showToast('Your answers were sent to the recruiter.', 'success');
+            }
+            catch (error)
+            {
+                showError(error.message);
+                Dash.setBusy(button, false);
+            }
+        });
+
+        if (user)
+        {
+            Dash.mountShell({
+                user: user,
+                logo: 'messages-square',
+                title: 'Interview questions',
+                subtitle: 'Your answers go directly to the recruiter',
+                search: false,
+                items: Dash.CANDIDATE_NAV
+            });
+            load();
+        }
+    </script>
+</body>
+</html>

@@ -779,6 +779,7 @@ const CommandPalette =
 
         CommandPalette.jobs.forEach(function (job)
         {
+            const jobId = job.id || job._id;
             const place = [job.department, job.location].filter(Boolean).join(', ');
             const haystack = [job.title, job.department, job.location].join(' ').toLowerCase();
 
@@ -791,13 +792,13 @@ const CommandPalette =
 
             entries.push(
             {
-                id: 'job:' + job.id,
+                id: 'job:' + jobId,
                 group: 'Jobs',
                 label: job.title,
                 sub: place,
                 icon: 'briefcase',
                 meta: statusPill(job.status),
-                run: function () { CommandPalette.go('applicants.html?jobId=' + encodeURIComponent(job.id)); }
+                run: function () { CommandPalette.go('applicants.html?jobId=' + encodeURIComponent(jobId)); }
             });
         });
 

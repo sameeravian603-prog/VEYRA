@@ -91,7 +91,7 @@
     <script src="js/polish.js"></script>
     <script>
         const user = guardPage('recruiter');
-        const jobId = Dash.intParam('jobId', 0);
+        const jobId = Dash.param('jobId');
 
         let job = null;
         let applicants = [];

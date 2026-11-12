@@ -4,14 +4,17 @@ const Application = require('../models/application');
 const CandidateProfile = require('../models/candidateProfile');
 const Job = require('../models/job');
 const Notification = require('../models/notification');
+const InterviewQuestion = require('../models/interviewQuestion');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/AsyncHandler');
 const { ALIASES, normalizeSkill } = require('../services/skillNormalizer');
 const { assessCandidate } = require('../services/ai/candidateAssessment');
 const { extractResumeWithAI } = require('../services/ai/resumeParser');
 
+const OPEN_JOB_STATUSES = ['open', 'Open', 'active', 'Active', 'published', 'Published'];
+
 const transitions = {
-  Submitted: ['Parsed', 'Rejected'],
+  Submitted: ['Parsed', 'AI Assessment Available', 'Rejected'],
   Parsed: ['AI Assessment Available', 'Rejected'],
   'AI Assessment Available': ['Recruiter Review', 'Rejected'],
   'Recruiter Review': ['Shortlisted', 'Rejected'],
@@ -125,63 +128,22 @@ const createApplication = asyncHandler(async (req, res) => {
   }
   if (!mongoose.isValidObjectId(req.body.jobId)) throw new AppError('Invalid job id', 400);
 
-  const job = await Job.findOne({ _id: req.body.jobId, status: 'open' });
+  const job = await Job.findOne({ _id: req.body.jobId, status: { $in: OPEN_JOB_STATUSES } });
   if (!job) throw new AppError('This job is closed or unavailable.', 404);
 
-  let parser;
-  let resumeText;
-  try {
-    parser = new PDFParse({ data: req.file.buffer });
-    const parsed = await parser.getText();
-    resumeText = parsed.text.replace(/\u0000/g, '').trim();
-  } catch (error) {
-    throw new AppError('We could not read this PDF. Please upload a text-based PDF resume.', 422);
-  } finally {
-    await parser?.destroy();
-  }
-  if (!resumeText) throw new AppError('The PDF contains no readable text. Please upload a text-based resume.', 422);
-
-  let parsedResume;
-  try {
-    parsedResume = await extractResumeWithAI(resumeText);
-  } catch (error) {
-    parsedResume = extractResumeHeuristically(resumeText);
-  }
   const now = new Date();
   const filename = req.file.originalname.replace(/[\\/]/g, '_').slice(-255);
   const application = await Application.create({
     job: job._id,
     candidate: req.user._id,
-    status: 'Parsed',
+    status: 'Submitted',
     appliedAt: now,
     resumeFileName: filename,
     resumeContentType: 'application/pdf',
     resumeSize: req.file.size,
     resumeData: req.file.buffer,
-    resumeText,
-    parsedResume: { ...parsedResume, parsedAt: now },
-    history: [
-      { from: null, to: 'Submitted', changedBy: req.user.name, at: now },
-      { from: 'Submitted', to: 'Parsed', changedBy: 'system', at: now },
-    ],
+    history: [{ from: null, to: 'Submitted', changedBy: req.user.name, at: now }],
   });
-
-  await CandidateProfile.findOneAndUpdate(
-    { user: req.user._id },
-    {
-      $set: {
-        phone: parsedResume.phone,
-        skills: parsedResume.skills,
-        education: parsedResume.education,
-        experience: parsedResume.experience,
-        projects: parsedResume.projects,
-        resumeFileName: filename,
-        parsedAt: now,
-      },
-      $setOnInsert: { headline: '' },
-    },
-    { upsert: true, new: true, runValidators: true }
-  );
 
   await Notification.create({ user: req.user._id, message: `Your application for ${job.title} was received.` });
   res.status(201).json({
@@ -190,6 +152,8 @@ const createApplication = asyncHandler(async (req, res) => {
       id: String(application._id),
       status: application.status,
       appliedAt: application.appliedAt,
+      jobId: String(job._id),
+      jobTitle: job.title,
     },
   });
 });
@@ -198,6 +162,19 @@ const listCandidateApplications = asyncHandler(async (req, res) => {
   const applications = await Application.find({ candidate: req.user._id })
     .populate('job', 'title')
     .sort({ appliedAt: -1 });
+  const applicationIds = applications.map((application) => application._id);
+  const questions = await InterviewQuestion.find({
+    application: { $in: applicationIds },
+    publishedAt: { $ne: null },
+  }).select('application answeredAt');
+  const questionCounts = new Map();
+  for (const question of questions) {
+    const key = String(question.application);
+    const count = questionCounts.get(key) || { total: 0, answered: 0 };
+    count.total += 1;
+    if (question.answeredAt) count.answered += 1;
+    questionCounts.set(key, count);
+  }
   res.json({
     success: true,
     applications: applications.map((application) => ({
@@ -207,6 +184,8 @@ const listCandidateApplications = asyncHandler(async (req, res) => {
       status: application.status,
       appliedAt: application.appliedAt,
       timeline: application.history.map((entry) => ({ status: entry.to, at: entry.at })),
+      questionCount: questionCounts.get(String(application._id))?.total || 0,
+      answeredQuestionCount: questionCounts.get(String(application._id))?.answered || 0,
     })),
   });
 });
@@ -285,12 +264,57 @@ const getApplicationDetail = asyncHandler(async (req, res) => {
 const assessApplication = asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new AppError('Invalid application id', 400);
   const application = await Application.findById(req.params.id)
-    .select('+resumeText')
+    .select('+resumeText +resumeData')
     .populate('job')
     .populate('candidate');
   if (!application || !application.job || !application.job.recruiter.equals(req.user._id)) {
     throw new AppError('Application not found', 404);
   }
+
+  if (!application.resumeText) {
+    if (!application.resumeData) throw new AppError('This application has no uploaded resume to assess.', 409);
+
+    let parser;
+    try {
+      parser = new PDFParse({ data: application.resumeData });
+      const parsed = await parser.getText();
+      application.resumeText = parsed.text.replace(/\u0000/g, '').trim();
+    } catch (error) {
+      throw new AppError('We could not read this PDF. Please ask the candidate to upload a text-based PDF resume.', 422);
+    } finally {
+      await parser?.destroy();
+    }
+    if (!application.resumeText) {
+      throw new AppError('The PDF contains no readable text. Please ask the candidate to upload a text-based resume.', 422);
+    }
+  }
+
+  if (!application.parsedResume.parsedAt) {
+    let parsedResume;
+    try {
+      parsedResume = await extractResumeWithAI(application.resumeText);
+    } catch (error) {
+      parsedResume = extractResumeHeuristically(application.resumeText);
+    }
+    application.parsedResume = { ...parsedResume, parsedAt: new Date() };
+    await CandidateProfile.findOneAndUpdate(
+      { user: application.candidate._id },
+      {
+        $set: {
+          phone: parsedResume.phone,
+          skills: parsedResume.skills,
+          education: parsedResume.education,
+          experience: parsedResume.experience,
+          projects: parsedResume.projects,
+          resumeFileName: application.resumeFileName,
+          parsedAt: application.parsedResume.parsedAt,
+        },
+        $setOnInsert: { headline: '' },
+      },
+      { upsert: true, new: true, runValidators: true }
+    );
+  }
+
   if (!application.resumeText) throw new AppError('This application has no readable resume text to assess.', 409);
 
   application.score_json = await assessCandidate(
@@ -299,8 +323,8 @@ const assessApplication = asyncHandler(async (req, res) => {
     application.parsedResume.skills
   );
   application.score = application.score_json.total;
-  if (application.status === 'Parsed') {
-    application.history.push({ from: 'Parsed', to: 'AI Assessment Available', changedBy: 'system', at: new Date() });
+  if (application.status === 'Parsed' || application.status === 'Submitted') {
+    application.history.push({ from: application.status, to: 'AI Assessment Available', changedBy: 'system', at: new Date() });
     application.status = 'AI Assessment Available';
   }
   await application.save();
@@ -402,7 +426,15 @@ const addApplicationNote = asyncHandler(async (req, res) => {
 
 const listNotifications = asyncHandler(async (req, res) => {
   const notifications = await Notification.find({ user: req.user._id }).sort({ createdAt: -1 }).limit(100);
-  res.json({ success: true, notifications });
+  res.json({
+    success: true,
+    notifications: notifications.map((notification) => ({
+      id: String(notification._id),
+      message: notification.message,
+      read: notification.read,
+      createdAt: notification.createdAt,
+    })),
+  });
 });
 
 const markNotificationsRead = asyncHandler(async (req, res) => {

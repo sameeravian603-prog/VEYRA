@@ -9,6 +9,9 @@ const questionSchema = new mongoose.Schema(
     guideline: { type: String, trim: true, maxlength: 1500, default: '' },
     skill: { type: String, trim: true, default: null },
     askedAt: { type: Date, default: null },
+    publishedAt: { type: Date, default: null },
+    answer: { type: String, trim: true, maxlength: 5000, default: null },
+    answeredAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

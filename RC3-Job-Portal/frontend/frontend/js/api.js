@@ -1,4 +1,4 @@
-const USE_MOCK = true;
+const USE_MOCK = false;
 const API_BASE = '';
 const TOKEN_KEY = 'token';
 const USER_KEY = 'user';
@@ -110,6 +110,21 @@ function handleFailure(status, serverMessage)
     throw new ApiError(friendlyMessage(status, serverMessage), status);
 }
 
+function unwrapResponse(data)
+{
+    if (!data || data.success !== true)
+    {
+        return data;
+    }
+
+    const keys = Object.keys(data).filter(function (key)
+    {
+        return key !== 'success';
+    });
+
+    return keys.length === 1 ? data[keys[0]] : data;
+}
+
 async function request(method, path, body)
 {
     if (USE_MOCK)
@@ -171,7 +186,7 @@ async function request(method, path, body)
         return handleFailure(response.status, serverMessage);
     }
 
-    return data;
+    return unwrapResponse(data);
 }
 
 const Api =

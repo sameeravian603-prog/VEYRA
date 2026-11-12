@@ -1264,14 +1264,14 @@
 
             try
             {
-                const result = await Api.post('/api/applications/' + interview.applicationId + '/decision',
+                const result = await Api.patch('/api/applications/' + interview.applicationId + '/status',
                 {
-                    decision: pendingDecision.decision,
+                    status: pendingDecision.decision,
                     reason: reason
                 });
 
                 showToast('Decision recorded. Candidate notified.', 'success');
-                state.decisionNote = { interviewId: interview.id, message: result.notification };
+                state.decisionNote = { interviewId: interview.id, message: result.message || 'Decision recorded.' };
                 state.focus = '[data-interview="' + interview.id + '"] .pg-iv-title';
                 decisionOpener = null;
                 el('decision-dialog').close();

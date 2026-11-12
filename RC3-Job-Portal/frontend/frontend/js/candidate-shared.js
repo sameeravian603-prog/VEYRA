@@ -628,7 +628,15 @@ const ApplyFlow =
             }
 
             const data = new FormData();
-            data.append('jobId', String(job.id));
+            const jobId = job.id || job._id;
+
+            if (!jobId)
+            {
+                fail(new Error('This job does not have a valid ID. Please return to the job list and try again.'));
+                return;
+            }
+
+            data.append('jobId', String(jobId));
             data.append('resume', file);
 
             busy = true;

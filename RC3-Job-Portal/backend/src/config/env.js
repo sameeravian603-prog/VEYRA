@@ -11,6 +11,8 @@ module.exports = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: process.env.PORT || 3000,
   mongoUri: process.env.MONGO_URI,
+  mongoDbName: process.env.MONGO_DB_NAME || 'mongodb',
+  mongoLegacyDbName: process.env.MONGO_LEGACY_DB_NAME || 'test',
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',

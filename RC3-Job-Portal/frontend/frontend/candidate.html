@@ -128,6 +128,11 @@
         let flow = null;
         let drawerJobId = '';
 
+        function jobIdOf(job)
+        {
+            return job && (job.id || job._id) ? String(job.id || job._id) : '';
+        }
+
         function greetingWord()
         {
             const hour = new Date().getHours();
@@ -157,7 +162,7 @@
         {
             for (let i = 0; i < jobs.length; i++)
             {
-                if (String(jobs[i].id) === String(jobId))
+                if (jobIdOf(jobs[i]) === String(jobId))
                 {
                     return jobs[i];
                 }
@@ -235,7 +240,7 @@
 
             return jobs.filter(function (job)
             {
-                if (typeFilter === 'saved' && saved.indexOf(String(job.id)) === -1)
+                if (typeFilter === 'saved' && saved.indexOf(jobIdOf(job)) === -1)
                 {
                     return false;
                 }
@@ -265,13 +270,14 @@
 
         function cardHtml(job)
         {
-            const applied = appFor(job.id);
+            const idValue = jobIdOf(job);
+            const applied = appFor(idValue);
             const isNew = !applied && CandidateKit.isNewJob(job);
-            const isSaved = saved.indexOf(String(job.id)) !== -1;
+            const isSaved = saved.indexOf(idValue) !== -1;
             const required = (job.skills || []).filter(function (item) { return item.requirement === 'required'; });
             const shown = required.slice(0, 5);
             const more = required.length - shown.length;
-            const id = CandidateKit.attrEsc(job.id);
+            const id = CandidateKit.attrEsc(idValue);
             const title = CandidateKit.attrEsc(job.title);
             const facts = [];
 
@@ -458,9 +464,13 @@
 
         function handleApplied(result, job)
         {
-            if (result && result.application)
+            if (result)
             {
-                apps.unshift(result.application);
+                apps.unshift(Object.assign({}, result, {
+                    jobId: jobIdOf(job),
+                    jobTitle: job.title,
+                    timeline: [{ status: result.status, at: result.appliedAt }]
+                }));
             }
 
             appsLoaded = true;
@@ -482,7 +492,7 @@
                 return;
             }
 
-            drawerJobId = String(job.id);
+            drawerJobId = jobIdOf(job);
             drawerTitle.textContent = 'Apply for ' + job.title;
             drawerSub.textContent = 'Attach your resume as a PDF and send your application.';
             flow = ApplyFlow.mount(drawerBody, job,

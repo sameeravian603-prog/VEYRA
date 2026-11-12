@@ -226,8 +226,9 @@ const VX =
         {
             const open = !job.status || job.status === 'open';
             const where = [job.location, job.type].filter(Boolean).join(' · ');
+            const jobId = job.id || job._id;
 
-            return '<li class="vx-row"><span class="vx-ico">' + VX.icon('briefcase') + '</span><div><b><a href="applicants.html?jobId=' + encodeURIComponent(job.id) + '">' + VX.esc(job.title) + '</a></b><small>' + VX.esc(where) + '</small></div>' +
+            return '<li class="vx-row"><span class="vx-ico">' + VX.icon('briefcase') + '</span><div><b><a href="applicants.html?jobId=' + encodeURIComponent(jobId) + '">' + VX.esc(job.title) + '</a></b><small>' + VX.esc(where) + '</small></div>' +
                 Dash.badge(open ? 'Active' : 'Closed', open ? 'ok' : 'neutral') + '<span class="rd-num">' + (counts[job.title] || 0) + ' applicants</span></li>';
         }).join('') + '</ul>' : '<p class="rd-empty">No jobs yet.</p>';
     },

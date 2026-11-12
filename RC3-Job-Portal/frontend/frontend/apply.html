@@ -51,7 +51,7 @@
     <script src="js/candidate-shared.js"></script>
     <script>
         const user = guardPage('candidate');
-        const jobId = Dash.intParam('jobId', 0);
+        const jobId = Dash.param('jobId');
         const jobPanel = document.getElementById('job-panel');
         const applyPanel = document.getElementById('apply-panel');
 
@@ -108,7 +108,7 @@
         {
             applyPanel.hidden = true;
 
-            if (!jobId)
+            if (!/^[a-f\d]{24}$/i.test(String(jobId || '')))
             {
                 jobPanel.innerHTML = Dash.empty('briefcase', 'We could not tell which job you want to apply to. Open a job from your dashboard and choose Apply now.', '<a class="btn btn-sm" href="candidate.html#jobs">Browse open jobs</a>');
                 Dash.icons();

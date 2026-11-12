@@ -188,8 +188,8 @@
     <script src="js/dashboard.js"></script>
     <script>
         const user = guardPage('recruiter');
-        const applicantId = Dash.intParam('id', 0);
-        let jobId = Dash.intParam('jobId', 0);
+        const applicantId = Dash.param('id');
+        let jobId = Dash.param('jobId');
         const TABS = ['evidence', 'overview', 'questions', 'interview', 'notes'];
         const COMPARE_KEY = 'soryn-compare';
         const COMPARE_MAX = 3;
@@ -205,7 +205,7 @@
             { key: 'qualifications', label: 'Qualifications', weight: 15 }
         ];
 
-        const TRANSITIONS =
+        const APPLICANT_TRANSITIONS =
         {
             'Submitted': ['Parsed', 'Rejected'],
             'Parsed': ['AI Assessment Available', 'Rejected'],
@@ -360,6 +360,22 @@
             }
         }
 
+        async function refreshAnswers(button)
+        {
+            Dash.setBusy(button, true);
+            try
+            {
+                questions = await Api.get('/api/applications/' + applicantId + '/questions');
+                renderQuestions();
+                showToast('Candidate answers refreshed.', 'success');
+            }
+            catch (error)
+            {
+                showError('questions-error', error.message);
+                Dash.setBusy(button, false);
+            }
+        }
+
         function storeCompare(list)
         {
             try
@@ -477,7 +493,7 @@
 
         function renderActions()
         {
-            const allowed = TRANSITIONS[applicant.status] || [];
+            const allowed = APPLICANT_TRANSITIONS[applicant.status] || [];
             const forward = allowed.filter(function (status)
             {
                 return status !== 'Rejected';
@@ -888,8 +904,10 @@
                 evidenceBuilt = false;
                 el('evidence-body').innerHTML =
                     Dash.callout('info', 'No AI assessment yet',
-                        '<p>This resume has not been parsed and scored yet. The evidence view, questions and fairness check unlock once an assessment exists.</p>') +
+                        '<p>This resume has not been parsed and scored yet. Run the AI assessment to review evidence and generate tailored questions.</p>' +
+                        '<button class="btn btn-sm" type="button" data-act="assess"><i data-lucide="sparkles"></i>Run AI assessment</button>') +
                     Dash.empty('file-text', 'Nothing to review here until this application has been assessed.');
+                Dash.icons();
                 return;
             }
 
@@ -1201,6 +1219,24 @@
             }
 
             Dash.setBusy(button, false);
+        }
+
+        async function publishQuestions(button)
+        {
+            hideError('questions-error');
+            Dash.setBusy(button, true);
+
+            try
+            {
+                questions = await Api.post('/api/applications/' + applicantId + '/questions/publish');
+                renderQuestions();
+                showToast('Questions sent to the candidate.', 'success');
+            }
+            catch (error)
+            {
+                showError('questions-error', error.message);
+                Dash.setBusy(button, false);
+            }
         }
 
         async function runFairness(button)
@@ -1515,6 +1551,12 @@
                     '</div></div>';
             }
 
+            if (item.answer)
+            {
+                    html += '<div class="d-q-answer"><b>Candidate answer</b><p>' + Dash.esc(item.answer) + '</p>' +
+                        '<small>' + (item.answeredAt ? 'Submitted ' + Dash.esc(Dash.dateTime(item.answeredAt)) : '') + '</small></div>';
+            }
+
             html += '</div></div></div>';
             return html;
         }
@@ -1569,7 +1611,15 @@
                 html += '<div class="d-group-title">Other</div>' + other.map(questionHtml).join('');
             }
 
+            const published = questions.every(function (item) { return Boolean(item.publishedAt); });
+            const answered = questions.filter(function (item) { return Boolean(item.answeredAt); }).length;
+            html += '<div class="d-actions"><button class="btn" type="button" data-act="publish-questions"' +
+                (published || statusBusy ? ' disabled' : '') + '><i data-lucide="send"></i>' +
+                (published ? 'Questions sent to applicant' : 'Send questions to applicant') + '</button>' +
+                (published ? '<button class="btn btn-secondary" type="button" data-act="refresh-answers"><i data-lucide="refresh-cw"></i>Refresh answers</button>' : '') +
+                (answered ? '<span class="muted">' + answered + ' of ' + questions.length + ' answers submitted</span>' : '') + '</div>';
             body.innerHTML = html;
+            Dash.icons();
         }
 
         function copyQuestions()
@@ -1834,7 +1884,7 @@
             try
             {
                 applicant = await Api.get('/api/applications/' + applicantId);
-                historyList = applicant.history || await Api.get('/api/applications/' + applicantId + '/history');
+                historyList = applicant.history || [];
             }
             catch (error)
             {
@@ -2049,8 +2099,8 @@
 
             try
             {
-                const result = await Api.post('/api/applications/' + applicantId + '/decision', { decision: decisionTarget, reason: reason });
-                applicant = result.application;
+                const result = await Api.patch('/api/applications/' + applicantId + '/status', { status: decisionTarget, reason: reason });
+                applicant = result;
                 historyList = applicant.history || historyList;
                 newHistoryFrom = Math.max(0, historyList.length - 1);
                 el('decision-dialog').close();
@@ -2147,15 +2197,9 @@
                     }
                 }
 
-                const extra = await Promise.all([
-                    Api.get('/api/applications/' + applicantId + '/questions'),
-                    Api.get('/api/applications/' + applicantId + '/notes'),
-                    Api.get('/api/applications/' + applicantId + '/history')
-                ]);
-
-                questions = extra[0];
-                notes = extra[1];
-                historyList = extra[2];
+                questions = await Api.get('/api/applications/' + applicantId + '/questions');
+                notes = applicant.notes || [];
+                historyList = applicant.history || [];
                 explanation = (applicant.score_json && applicant.score_json.explanation) || '';
                 learning = (applicant.score_json && applicant.score_json.learning_areas) || [];
 
@@ -2272,7 +2316,7 @@
 
                 if (action)
                 {
-                    if (action.getAttribute('data-act') === 'rescore')
+                    if (action.getAttribute('data-act') === 'rescore' || action.getAttribute('data-act') === 'assess')
                     {
                         runRescore(action);
                     }
@@ -2503,6 +2547,16 @@
                 if (action === 'generate')
                 {
                     generateQuestions(el('gen-questions'));
+                    return;
+                }
+                if (action === 'publish-questions')
+                {
+                    publishQuestions(button);
+                    return;
+                }
+                if (action === 'refresh-answers')
+                {
+                    refreshAnswers(button);
                     return;
                 }
 

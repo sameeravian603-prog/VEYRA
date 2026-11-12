@@ -2,10 +2,86 @@ const mongoose = require('mongoose');
 const Application = require('../models/application');
 const Interview = require('../models/interview');
 const InterviewQuestion = require('../models/interviewQuestion');
+const Job = require('../models/job');
 const Notification = require('../models/notification');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/AsyncHandler');
 const { generateInterviewQuestions } = require('../services/ai/interviewQuestions');
+const { mongoLegacyDbName } = require('../config/env');
+
+async function getCandidateQuestionSet(applicationId, candidateId) {
+  let application = await Application.findOne({ _id: applicationId, candidate: candidateId }).populate('job', 'title recruiter');
+  let questions = application
+    ? await InterviewQuestion.find({ application: application._id, publishedAt: { $ne: null } }).sort({ createdAt: 1 })
+    : [];
+
+  if (questions.length || !mongoLegacyDbName || mongoLegacyDbName === mongoose.connection.name) {
+    return { application, questions };
+  }
+
+  const legacyDb = mongoose.connection.useDb(mongoLegacyDbName, { useCache: true });
+  const LegacyApplication = legacyDb.models.Application
+    || legacyDb.model('Application', Application.schema, Application.collection.name);
+  const LegacyJob = legacyDb.models.Job || legacyDb.model('Job', Job.schema, Job.collection.name);
+  const LegacyInterviewQuestion = legacyDb.models.InterviewQuestion
+    || legacyDb.model('InterviewQuestion', InterviewQuestion.schema, InterviewQuestion.collection.name);
+  const legacyApplication = await LegacyApplication.findOne({
+    _id: applicationId,
+    candidate: candidateId,
+  }).select('+resumeData +resumeText').populate('job');
+
+  if (!legacyApplication || !legacyApplication.job) {
+    return { application, questions };
+  }
+
+  const jobData = legacyApplication.job.toObject();
+  await Job.collection.updateOne(
+    { _id: jobData._id },
+    { $setOnInsert: jobData },
+    { upsert: true }
+  );
+
+  if (!application) {
+    const applicationData = legacyApplication.toObject();
+    applicationData.job = jobData._id;
+    await Application.collection.updateOne(
+      { _id: applicationData._id },
+      { $setOnInsert: applicationData },
+      { upsert: true }
+    );
+    application = await Application.findOne({ _id: applicationId, candidate: candidateId })
+      .populate('job', 'title recruiter');
+  }
+
+  if (!application?.job || String(application.job.recruiter) !== String(legacyApplication.job.recruiter)) {
+    return { application, questions };
+  }
+
+  const legacyQuestions = await LegacyInterviewQuestion.find({
+    application: applicationId,
+    recruiter: application.job.recruiter,
+    publishedAt: { $ne: null },
+  }).lean();
+
+  if (legacyQuestions.length) {
+    await InterviewQuestion.collection.bulkWrite(
+      legacyQuestions.map((question) => ({
+        updateOne: {
+          filter: { _id: question._id },
+          update: { $setOnInsert: question },
+          upsert: true,
+        },
+      })),
+      { ordered: true }
+    );
+    questions = await InterviewQuestion.find({
+      application: application._id,
+      publishedAt: { $ne: null },
+    }).sort({ createdAt: 1 });
+  }
+
+  return { application, questions };
+}
 
 async function findOwnedApplication(id, recruiterId) {
   if (!mongoose.isValidObjectId(id)) throw new AppError('Invalid application id', 400);
@@ -14,6 +90,20 @@ async function findOwnedApplication(id, recruiterId) {
     throw new AppError('Application not found', 404);
   }
   return application;
+}
+
+function questionView(question) {
+  return {
+    id: String(question._id),
+    level: question.level,
+    text: question.text,
+    guideline: question.guideline,
+    skill: question.skill,
+    askedAt: question.askedAt,
+    publishedAt: question.publishedAt,
+    answer: question.answer,
+    answeredAt: question.answeredAt,
+  };
 }
 
 async function findOwnedInterview(id, recruiterId) {
@@ -48,7 +138,7 @@ async function getConflicts({ start, duration, interviewer, candidate, recruiter
 const listQuestions = asyncHandler(async (req, res) => {
   await findOwnedApplication(req.params.applicationId, req.user._id);
   const questions = await InterviewQuestion.find({ application: req.params.applicationId, recruiter: req.user._id }).sort({ createdAt: 1 });
-  res.json({ success: true, questions });
+  res.json({ success: true, questions: questions.map(questionView) });
 });
 
 const generateQuestions = asyncHandler(async (req, res) => {
@@ -60,18 +150,111 @@ const generateQuestions = asyncHandler(async (req, res) => {
     application: application._id,
     recruiter: req.user._id,
   })));
-  res.status(201).json({ success: true, questions });
+  res.status(201).json({ success: true, questions: questions.map(questionView) });
+});
+
+const publishQuestions = asyncHandler(async (req, res) => {
+  const application = await findOwnedApplication(req.params.applicationId, req.user._id);
+  const questions = await InterviewQuestion.find({ application: application._id, recruiter: req.user._id }).sort({ createdAt: 1 });
+  if (!questions.length) throw new AppError('Generate at least one question before sending them to the candidate.', 409);
+
+  if (questions.some((question) => question.answer !== null && question.answer !== undefined)) {
+    throw new AppError('Questions with submitted answers cannot be sent again.', 409);
+  }
+
+  const alreadyPublished = questions.every((question) => question.publishedAt);
+  if (!alreadyPublished) {
+    const publishedAt = new Date();
+    await InterviewQuestion.updateMany(
+      { application: application._id, recruiter: req.user._id },
+      { $set: { publishedAt } }
+    );
+    await Notification.create({
+      user: application.candidate._id,
+      message: `The recruiter sent you interview questions for ${application.job.title}. Open My applications to respond.`,
+    });
+  }
+
+  const updated = await InterviewQuestion.find({ application: application._id, recruiter: req.user._id }).sort({ createdAt: 1 });
+  res.json({ success: true, questions: updated.map(questionView) });
+});
+
+const listCandidateQuestions = asyncHandler(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.applicationId)) throw new AppError('Invalid application id', 400);
+  const { application, questions } = await getCandidateQuestionSet(req.params.applicationId, req.user._id);
+  if (!application || !application.job) throw new AppError('Application not found', 404);
+  res.json({
+    success: true,
+    questions: questions.map((question) => ({
+      id: String(question._id),
+      level: question.level,
+      text: question.text,
+      skill: question.skill,
+      answer: question.answer,
+      answeredAt: question.answeredAt,
+    })),
+    jobTitle: application.job?.title || 'Application',
+    candidateName: req.user.name,
+  });
+});
+
+const submitCandidateAnswers = asyncHandler(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.applicationId)) throw new AppError('Invalid application id', 400);
+  const { application } = await getCandidateQuestionSet(req.params.applicationId, req.user._id);
+  if (!application || !application.job) throw new AppError('Application not found', 404);
+
+  const answers = req.body.answers;
+  if (!Array.isArray(answers) || !answers.length) throw new AppError('Please answer each question before submitting.', 400);
+  const normalized = new Map();
+  for (const item of answers) {
+    const id = String(item?.questionId || '');
+    const answer = String(item?.answer || '').trim();
+    if (!mongoose.isValidObjectId(id) || !answer || answer.length > 5000 || normalized.has(id)) {
+      throw new AppError('Each question needs one answer of 1 to 5000 characters.', 400);
+    }
+    normalized.set(id, answer);
+  }
+
+  const questions = await InterviewQuestion.find({
+    application: application._id,
+    publishedAt: { $ne: null },
+  });
+  if (!questions.length || questions.length !== normalized.size
+    || questions.some((question) => !normalized.has(String(question._id)))) {
+    throw new AppError('The question set changed. Reload the page and try again.', 409);
+  }
+  if (questions.some((question) => question.answeredAt)) {
+    throw new AppError('Your answers have already been submitted.', 409);
+  }
+
+  const answeredAt = new Date();
+  const result = await InterviewQuestion.bulkWrite(questions.map((question) => ({
+    updateOne: {
+      filter: { _id: question._id, answeredAt: null },
+      update: { $set: { answer: normalized.get(String(question._id)), answeredAt } },
+    },
+  })));
+  if (result.matchedCount !== questions.length) {
+    throw new AppError('Your answers were already submitted. Refresh the page to see them.', 409);
+  }
+  await Notification.create({
+    user: application.job.recruiter,
+    message: `${req.user.name} submitted answers to the interview questions for ${application.job.title}.`,
+  });
+
+  res.json({ success: true, submittedAt: answeredAt, count: questions.length });
 });
 
 const updateQuestion = asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new AppError('Invalid question id', 400);
   const question = await InterviewQuestion.findOne({ _id: req.params.id, recruiter: req.user._id });
   if (!question) throw new AppError('Question not found', 404);
+  if (question.publishedAt) throw new AppError('Questions cannot be edited after they are sent to the candidate.', 409);
   if (req.body.text !== undefined) question.text = String(req.body.text).trim();
   if (req.body.guideline !== undefined) question.guideline = String(req.body.guideline).trim();
   if (req.body.level !== undefined) question.level = req.body.level;
   await question.save();
-  res.json({ success: true, question });
+  res.json({ success: true, question: questionView(question) });
 });
 
 const markQuestionAsked = asyncHandler(async (req, res) => {
@@ -80,13 +263,15 @@ const markQuestionAsked = asyncHandler(async (req, res) => {
   if (!question) throw new AppError('Question not found', 404);
   question.askedAt = req.body.asked === false ? null : new Date();
   await question.save();
-  res.json({ success: true, question });
+  res.json({ success: true, question: questionView(question) });
 });
 
 const deleteQuestion = asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new AppError('Invalid question id', 400);
-  const question = await InterviewQuestion.findOneAndDelete({ _id: req.params.id, recruiter: req.user._id });
+  const question = await InterviewQuestion.findOne({ _id: req.params.id, recruiter: req.user._id });
   if (!question) throw new AppError('Question not found', 404);
+  if (question.publishedAt) throw new AppError('Questions cannot be removed after they are sent to the candidate.', 409);
+  await question.deleteOne();
   res.json({ success: true, deleted: String(question._id) });
 });
 
@@ -94,6 +279,7 @@ const regenerateQuestion = asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) throw new AppError('Invalid question id', 400);
   const question = await InterviewQuestion.findOne({ _id: req.params.id, recruiter: req.user._id });
   if (!question) throw new AppError('Question not found', 404);
+  if (question.publishedAt) throw new AppError('Questions cannot be regenerated after they are sent to the candidate.', 409);
   const application = await findOwnedApplication(question.application, req.user._id);
   if (!application.score_json) throw new AppError('Assess this application before generating interview questions.', 409);
   const generated = await generateInterviewQuestions(application.job, application);
@@ -102,7 +288,7 @@ const regenerateQuestion = asyncHandler(async (req, res) => {
   question.guideline = replacement.guideline;
   question.skill = replacement.skill;
   await question.save();
-  res.json({ success: true, question });
+  res.json({ success: true, question: questionView(question) });
 });
 
 const createInterview = asyncHandler(async (req, res) => {
@@ -212,6 +398,9 @@ const saveFeedback = asyncHandler(async (req, res) => {
 module.exports = {
   listQuestions,
   generateQuestions,
+  publishQuestions,
+  listCandidateQuestions,
+  submitCandidateAnswers,
   updateQuestion,
   markQuestionAsked,
   deleteQuestion,

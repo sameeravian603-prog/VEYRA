@@ -217,11 +217,12 @@
         function rowHtml(job, index)
         {
             const open = job.status === 'open';
-            const id = encodeURIComponent(job.id);
-            const idAttr = attrEsc(job.id);
+            const jobId = job.id || job._id;
+            const id = encodeURIComponent(jobId);
+            const idAttr = attrEsc(jobId);
             const titleAttr = attrEsc(job.title);
             const count = Number(job.applicantCount) || 0;
-            const flash = changedId && String(job.id) === String(changedId) ? ' jb-flash' : '';
+            const flash = changedId && String(jobId) === String(changedId) ? ' jb-flash' : '';
 
             return '<li class="jp-card' + (open ? ' is-open' : '') + flash + '" data-job="' + idAttr + '" style="--i:' + index + '">' +
                 '<div class="jp-icon"><i data-lucide="' + iconFor(job.title) + '"></i></div>' +

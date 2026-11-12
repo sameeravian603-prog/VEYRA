@@ -16,5 +16,6 @@ router.get('/:id/notes', requireRole('recruiter'), c.listApplicationNotes);
 router.post('/:id/notes', requireRole('recruiter'), c.addApplicationNote);
 router.get('/:applicationId/questions', requireRole('recruiter'), interviews.listQuestions);
 router.post('/:applicationId/questions/generate', requireRole('recruiter'), aiLimiter, interviews.generateQuestions);
+router.post('/:applicationId/questions/publish', requireRole('recruiter'), interviews.publishQuestions);
 
 module.exports = router;
